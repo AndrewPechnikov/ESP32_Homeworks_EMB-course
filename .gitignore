@@ -1,0 +1,11 @@
+.pio/
+.vscode/
+.env
+*.log
+*.map
+.DS_Store
+include/secrets.h
+
+# Якщо використовуєте ESP-IDF
+sdkconfig
+sdkconfig.old
