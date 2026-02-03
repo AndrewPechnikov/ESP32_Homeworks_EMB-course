@@ -12,6 +12,8 @@
 
 #define DEBOUNCE_TIME 50
 
+#define UART_BAUD 115200
+
 /*0 - повільне перемикання 
 1 - швидке перемикання 
 2 - одночасне перемикання*/
@@ -19,7 +21,7 @@ char mode = 0;
 
 /*0 - не має закільцьованого перемикання 
 1 - є закільцьоване перемикання з повернення на mode 0 при одночасному натисканні */
-const bool SERIAL_MODE = 0;
+const bool CYCLIC_MODE = false;
 
 
 void switchLedLogika(char mode);
@@ -30,6 +32,9 @@ void alarm(int LED1, int LED2);
 
 void setup()
 {
+
+  Serial0.begin(UART_BAUD);
+  Serial0.println("UART is working");
 
   pinMode(LED_RED_PIN, OUTPUT);
   pinMode(LED_GREEN_PIN, OUTPUT);
@@ -42,29 +47,40 @@ void loop()
 {
 
   bool firstButton = digitalRead(FIRST_BUTTON_PIN);
-  bool secondButton = digitalRead(!SECOND_BUTTON_PIN);
+  bool secondButton = !digitalRead(SECOND_BUTTON_PIN);
 
 
-  if(!SERIAL_MODE){
-
+  if(!CYCLIC_MODE){   
     mode = (firstButton) ? 1 : mode;
     mode = (secondButton) ? 2 : mode;
     mode = (secondButton && firstButton) ? 0 : mode;
-
-    //delay(LONG_TIME_PAUSE);
     switchLedLogika(mode);
-
   }
-
-
   else{
-
     mode = (firstButton) ? ((mode + 1) % 3) : mode;
     mode = (secondButton) ? ((mode - 1 + 3) % 3) : mode;
     mode = (secondButton && firstButton) ? 0 : mode;
     switchLedLogika(mode);
-
   }
+
+    switch (mode) {
+      case 0:
+      Serial0.println("Mode: default blinking");
+      break;
+
+      case 1:
+      Serial0.println("Mode: fast blinking");
+      break;
+
+      case 2:
+      Serial0.println("Mode: alarm blinking");
+      break;
+
+      default:
+      Serial0.println("Mode: undefined");
+      break;
+    }
+    
 
 
   delay(DEBOUNCE_TIME);
