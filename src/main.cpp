@@ -1,141 +1,54 @@
 #include <Arduino.h>
 
-#define LED_RED_PIN 16
+#define BUTTON_LEFT 15
+#define BUTTON_RIGHT 3
 
-#define LED_GREEN_PIN 4
+volatile int16_t counter_left = 0;
+volatile int16_t counter_right = 0;
 
-#define FIRST_BUTTON_PIN 21
-#define SECOND_BUTTON_PIN 0
+volatile unsigned long lastPressTime = 0;
+volatile bool buttonState = HIGH;    // поточний стабільний стан
+volatile bool newEvent = false;      // сигнал про зміну стану кнопки
 
-#define SHORT_TIME_PAUSE 100
-#define LONG_TIME_PAUSE 1000
-
-#define DEBOUNCE_TIME 50
-
-#define UART_BAUD 115200
-
-/*0 - повільне перемикання 
-1 - швидке перемикання 
-2 - одночасне перемикання*/
-char mode = 0;
-
-/*0 - не має закільцьованого перемикання 
-1 - є закільцьоване перемикання з повернення на mode 0 при одночасному натисканні */
-const bool CYCLIC_MODE = false;
-
-
-void switchLedLogika(char mode);
-void fast_blinking(int LED1, int LED2);
-void blinking(int LED1, int LED2);
-void alarm(int LED1, int LED2);
-
-
-void setup()
-{
-
-  Serial0.begin(UART_BAUD);
-  Serial0.println("UART is working");
-
-  pinMode(LED_RED_PIN, OUTPUT);
-  pinMode(LED_GREEN_PIN, OUTPUT);
-
-  pinMode(FIRST_BUTTON_PIN, INPUT);
-  pinMode(SECOND_BUTTON_PIN, INPUT_PULLUP);
+void IRAM_ATTR reaction_left() {
+  counter_left++;
 }
 
-void loop()
-{
-
-  bool firstButton = digitalRead(FIRST_BUTTON_PIN);
-  bool secondButton = !digitalRead(SECOND_BUTTON_PIN);
-
-
-  if(!CYCLIC_MODE){   
-    mode = (firstButton) ? 1 : mode;
-    mode = (secondButton) ? 2 : mode;
-    mode = (secondButton && firstButton) ? 0 : mode;
-    switchLedLogika(mode);
-  }
-  else{
-    mode = (firstButton) ? ((mode + 1) % 3) : mode;
-    mode = (secondButton) ? ((mode - 1 + 3) % 3) : mode;
-    mode = (secondButton && firstButton) ? 0 : mode;
-    switchLedLogika(mode);
-  }
-
-    switch (mode) {
-      case 0:
-      Serial0.println("Mode: default blinking");
-      break;
-
-      case 1:
-      Serial0.println("Mode: fast blinking");
-      break;
-
-      case 2:
-      Serial0.println("Mode: alarm blinking");
-      break;
-
-      default:
-      Serial0.println("Mode: undefined");
-      break;
+// ISR для правої кнопки
+void IRAM_ATTR reaction_right() {
+  unsigned long now = millis();
+  bool current = digitalRead(BUTTON_RIGHT);
+  counter_right++;
+  // антидребезг: ігноруємо зміни раніше, ніж через 50 мс
+  if (now - lastPressTime > 20) {
+    if (current != buttonState) {
+      buttonState = current;
+      newEvent = true;
+      lastPressTime = now;
     }
+  }
+}
+
+void setup() {
+  pinMode(BUTTON_LEFT, INPUT);
+  pinMode(BUTTON_RIGHT, INPUT_PULLUP);
+  Serial.begin(115200);
+
+  attachInterrupt(digitalPinToInterrupt(BUTTON_LEFT), reaction_left, FALLING);
+  attachInterrupt(digitalPinToInterrupt(BUTTON_RIGHT), reaction_right, CHANGE);
+}
+
+void loop() {
+  if (newEvent) {
+    noInterrupts();
+    bool state = buttonState;
+    int16_t copy_counter_right = counter_right;
+    counter_right = 0;
+    newEvent = false;
+    interrupts();
+
+    String position = (state == HIGH) ? "UNPRESS" : "PRESS";
+    Serial.println("\nRIGHT Button " + position + "! Count: " + String(copy_counter_right));
     
-
-
-  delay(DEBOUNCE_TIME);
-}
-
-void switchLedLogika(char mode){
-  if (mode == 0)
-    {
-      blinking(LED_RED_PIN, LED_GREEN_PIN);
-    }
-    else if (mode == 1)
-    {
-      fast_blinking(LED_RED_PIN, LED_GREEN_PIN);
-    }
-
-    else if (mode == 2)
-    {
-      alarm(LED_RED_PIN, LED_GREEN_PIN);
-    }
-
-}
-
-void fast_blinking(int LED1, int LED2)
-{
-  for (int i = 0; i < 4; i++)
-  {
-    digitalWrite(LED1, HIGH);
-    delay(SHORT_TIME_PAUSE);
-    digitalWrite(LED1, LOW);
-    delay(SHORT_TIME_PAUSE);
-    digitalWrite(LED2, HIGH);
-    delay(SHORT_TIME_PAUSE);
-    digitalWrite(LED2, LOW);
-    delay(SHORT_TIME_PAUSE);
   }
-}
-
-void alarm(int LED1, int LED2)
-{
-
-  digitalWrite(LED1, HIGH);
-  digitalWrite(LED2, HIGH);
-  delay(LONG_TIME_PAUSE);
-  digitalWrite(LED1, LOW);
-  digitalWrite(LED2, LOW);
-  delay(LONG_TIME_PAUSE);
-}
-
-void blinking(int LED1, int LED2)
-{
-
-  digitalWrite(LED1, HIGH);
-  delay(LONG_TIME_PAUSE);
-  digitalWrite(LED1, LOW);
-  digitalWrite(LED2, HIGH);
-  delay(LONG_TIME_PAUSE);
-  digitalWrite(LED2, LOW);
 }
