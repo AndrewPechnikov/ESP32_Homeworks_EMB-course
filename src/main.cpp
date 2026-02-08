@@ -1,54 +1,44 @@
 #include <Arduino.h>
 
-#define BUTTON_LEFT 15
-#define BUTTON_RIGHT 3
+#define BUTTON_RIGHT 9
 
-volatile int16_t counter_left = 0;
 volatile int16_t counter_right = 0;
+volatile unsigned long firstImpulseTime = 0;
+volatile unsigned long lastImpulseTime = 0;
 
-volatile unsigned long lastPressTime = 0;
-volatile bool buttonState = HIGH;    // поточний стабільний стан
-volatile bool newEvent = false;      // сигнал про зміну стану кнопки
-
-void IRAM_ATTR reaction_left() {
-  counter_left++;
-}
-
-// ISR для правої кнопки
-void IRAM_ATTR reaction_right() {
-  unsigned long now = millis();
-  bool current = digitalRead(BUTTON_RIGHT);
-  counter_right++;
-  // антидребезг: ігноруємо зміни раніше, ніж через 50 мс
-  if (now - lastPressTime > 20) {
-    if (current != buttonState) {
-      buttonState = current;
-      newEvent = true;
-      lastPressTime = now;
+void reaction_right() {
+    unsigned long time = micros();
+    if (counter_right == 0) {
+        firstImpulseTime = time;
     }
-  }
+    lastImpulseTime = time;
+    counter_right++;
 }
 
 void setup() {
-  pinMode(BUTTON_LEFT, INPUT);
-  pinMode(BUTTON_RIGHT, INPUT_PULLUP);
-  Serial.begin(115200);
-
-  attachInterrupt(digitalPinToInterrupt(BUTTON_LEFT), reaction_left, FALLING);
-  attachInterrupt(digitalPinToInterrupt(BUTTON_RIGHT), reaction_right, CHANGE);
+    pinMode(BUTTON_RIGHT, INPUT_PULLUP);
+    Serial0.begin(115200);
+    attachInterrupt(digitalPinToInterrupt(BUTTON_RIGHT), reaction_right, FALLING);
 }
 
 void loop() {
-  if (newEvent) {
-    noInterrupts();
-    bool state = buttonState;
-    int16_t copy_counter_right = counter_right;
-    counter_right = 0;
-    newEvent = false;
-    interrupts();
+    int16_t count;
+    unsigned long startTime, endTime;
 
-    String position = (state == HIGH) ? "UNPRESS" : "PRESS";
-    Serial.println("\nRIGHT Button " + position + "! Count: " + String(copy_counter_right));
-    
-  }
+    if (counter_right > 0 && (micros() - lastImpulseTime > 50000)) {
+
+        noInterrupts();   
+        count = counter_right;
+        startTime = firstImpulseTime;
+        endTime = lastImpulseTime;
+
+        counter_right = 0;   
+        interrupts();    
+
+        Serial0.print("Кількість імпульсів (дребезг): ");
+        Serial0.println(count);
+        Serial0.print("Тривалість дребезгу (мкс): ");
+        Serial0.println(endTime - startTime);
+        Serial0.println("---");
+    }
 }
