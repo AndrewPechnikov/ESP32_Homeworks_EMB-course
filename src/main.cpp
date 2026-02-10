@@ -1,36 +1,45 @@
 #include <Arduino.h>
-#include <math.h>
-#define ADC_PIN 8
 
-#define LED_PIN 40
+// Конфігурація пінів
+#define ADC_PIN          1 
+#define LED_PWM_PIN      40
+#define SERVO_PWM_PIN    10
 
-#define ADC_DB ADC_11db 
-#define REF_VOLTAGE 3.3 
-#define BITS 12
+// Налаштування LED
+#define LED_CHANNEL      2
+#define LED_FREQ         1000
+#define LED_RES          12
 
+// Налаштування Серво 
+#define SERVO_CHANNEL    0
+#define SERVO_FREQ       50
+#define SERVO_RES        12
 
+// Математичні константи для Серво (12 біт)
+#define SERVO_MIN_DUTY   205  // 1 мс (0 градусів)
+#define SERVO_MAX_DUTY   410  // 2 мс (180 градусів)
+#define ADC_MAX_VALUE    4095 // 12 біт АЦП
 
-const float maxValue = pow(2, BITS) - 1; 
 void setup() {
-  Serial0.begin(115200);
-  analogSetAttenuation(ADC_DB);
-  analogReadResolution(BITS);
 
-  pinMode(LED_PIN, OUTPUT);
+  ledcSetup(SERVO_CHANNEL, SERVO_FREQ, SERVO_RES);
+  ledcAttachPin(SERVO_PWM_PIN, SERVO_CHANNEL);
+
+  ledcSetup(LED_CHANNEL, LED_FREQ, LED_RES);
+  ledcAttachPin(LED_PWM_PIN, LED_CHANNEL);
 }
 
 void loop() {
+
   int raw = analogRead(ADC_PIN);
-  float voltage = raw * REF_VOLTAGE / maxValue;
-
-
-  float PWM = raw / maxValue * 255;
-
-  analogWrite(LED_PIN, PWM);
-
   
-  //Serial0.println("Напруга: " + String(PWM) + "%");
-  delay(1);
-  
+
+  long adjustedLED = (long)raw * raw / ADC_MAX_VALUE; 
+  ledcWrite(LED_CHANNEL, (uint32_t)adjustedLED);
+
+
+  int servoDuty = map(raw, 0, ADC_MAX_VALUE, SERVO_MIN_DUTY, SERVO_MAX_DUTY);
+  ledcWrite(SERVO_CHANNEL, servoDuty);
+
+  delay(15);
 }
-
