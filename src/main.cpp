@@ -1,8 +1,8 @@
 #include <Arduino.h>
 
 
-constexpr uint8_t LED_PIN         = 13;
-constexpr uint8_t POT_PIN         = 34;
+constexpr uint8_t LED_PIN         = 40;
+constexpr uint8_t POT_PIN         = 5;
 constexpr uint8_t BUTTON_PIN      = 14;
 constexpr uint16_t WRITE_PAUSE    = 200;
 constexpr uint16_t DEBOUNCE_TIME  = 200;
@@ -19,12 +19,15 @@ class ToggleButton{
     ToggleButton(uint8_t pin,
                     bool state = false) : 
                     _pin(pin), 
-                    _state(state){}
+                    _state(state),
+                    _last_interrupt_time(0)
+                    {}
 
 
   void init(void (*callback)()){
     pinMode(_pin, INPUT);
-    attachInterrupt(_pin, callback, FALLING);
+    attachInterrupt(digitalPinToInterrupt(_pin), callback, FALLING);
+
   }
 
   void toggle(){
@@ -143,14 +146,12 @@ void IRAM_ATTR handleButton(){
 }
 
 void setup(){
-  led.init();
-  duty_controler.init();
-  button.init(handleButton);
-
-
   Serial0.begin(115200);
   Serial0.printf("System Started: Dimmer Control\n");
 
+  led.init();
+  duty_controler.init();
+  button.init(handleButton);
 }
 
 void loop(){
@@ -168,7 +169,7 @@ void loop(){
 
   if (millis() - lastPrint > WRITE_PAUSE){
     Serial0.printf("Level: %f \n", level);
-    Serial0.printf("State button: %f \n", button.isActive());
+    Serial0.printf("State button: %d \n", button.isActive());
     lastPrint = millis();
   }
   
