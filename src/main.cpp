@@ -26,25 +26,25 @@ class Potentiometer{
 
   private:
     uint8_t         _pin;
-    uint8_t         _adc_bit;
+    uint8_t         _adcBit;
     VoltageRange    _range;
-    uint32_t        _max_adc_value;
+    uint32_t        _maxAdcValue;
 
   public:
     Potentiometer(
       uint8_t pin, 
-      uint8_t  adc_bit = 12,
+      uint8_t adc_bit    = 12,
       VoltageRange range = VoltageRange::Voltage_3v3): 
       _pin(pin),  
-      _adc_bit(adc_bit),
+      _adcBit(adc_bit),
       _range(range) 
       {
 
-        _max_adc_value = (1 << _adc_bit) - 1;
+        _maxAdcValue = (1 << _adcBit) - 1;
       }
 
     void init(){
-      analogReadResolution(_adc_bit);
+      analogReadResolution(_adcBit);
       analogSetPinAttenuation(_pin, (adc_attenuation_t)_range);
     }
 
@@ -53,7 +53,7 @@ class Potentiometer{
     }
 
     float getPercent(){
-      return (getRaw() * 100.0f / _max_adc_value);
+      return (getRaw() * 100.0f / _maxAdcValue);
     }
 };
 
@@ -63,7 +63,7 @@ class PWM_generator{
     uint32_t  _freq;
     uint8_t   _resolution;
     uint8_t   _chanel;
-    uint32_t  _max_duty;
+    uint32_t  _maxDuty;
     
   public:
     PWM_generator(
@@ -76,7 +76,7 @@ class PWM_generator{
           _resolution(resolution),
           _chanel(chanel)
           {
-            _max_duty = (1 << _resolution) - 1;
+            _maxDuty = (1 << _resolution) - 1;
           }
 
     void init(){
@@ -96,7 +96,7 @@ class PWM_generator{
       percent = (percent < MIN_P)? 0.0f : percent; 
 
       
-      uint32_t duty = percent / 100.0f * _max_duty;
+      uint32_t duty = percent / 100.0f * _maxDuty;
       setDuty(duty);
 
     }
@@ -109,18 +109,18 @@ class PWM_generator{
 class Soft_PWM_generator{
   private:
     uint8_t         _pin;
-    uint16_t        _percent;
-    unsigned long   _previous_time = 0;
-    unsigned long   _on_time;
-    unsigned long   _off_time;
+    float           _percent;
+    unsigned long   _previousTime = 0;
+    unsigned long   _onTime;
+    unsigned long   _offTime;
     unsigned long   _period;
     bool            _pinState = false;
     
   public:
-    Soft_PWM_generator(uint8_t pin, uint16_t freq, uint16_t persent = 50):
-    _pin(pin), _period(1000000UL / freq), _percent(persent) {
-        _on_time = (_period * _percent) / 100;
-        _off_time = _period - _on_time;
+    Soft_PWM_generator(uint8_t pin, uint16_t freq, uint16_t percent = 50):
+    _pin(pin), _period(1000000UL / freq), _percent(percent) {
+        _onTime = (_period * _percent) / 100;
+        _offTime = _period - _onTime;
 
 
     }
@@ -163,16 +163,16 @@ class Soft_PWM_generator{
 
 
       if(getPinState()){
-        if((current_time - _previous_time) >= _on_time){
+        if((current_time - _previousTime) >= _onTime){
           digitalWrite(_pin, LOW);
            setPinState(false); 
-          _previous_time = current_time;
+          _previousTime = current_time;
         }
       }
-      else if((current_time - _previous_time) >= _off_time){
+      else if((current_time - _previousTime) >= _offTime){
           digitalWrite(_pin, HIGH);
           setPinState(true); 
-          _previous_time = current_time;
+          _previousTime = current_time;
       }
     }
     
@@ -184,8 +184,8 @@ class Soft_PWM_generator{
       _percent = (_percent > MAX_P)? 100.0f : _percent; 
       _percent = (_percent < MIN_P)? 0.0f : _percent; 
 
-      _on_time = (_period * _percent) / 100;
-      _off_time = _period - _on_time;
+      _onTime = (_period * _percent) / 100;
+      _offTime = _period - _onTime;
 
     }
 
@@ -196,59 +196,59 @@ class Soft_PWM_generator{
 
 };
 
-class Relay_control_and_measurement{
+class RelayControlAndMeasurement{
   private:
-    uint8_t _pin_coil;
-    uint8_t _pin_contact;
-    bool    _relay_state                     = false;
-    volatile bool    _measure_done           = false;
-    volatile unsigned long _command_on_time  = 0;
-    volatile unsigned long _result_time      = 0;
+    uint8_t _pinCoil;
+    uint8_t _pinContact;
+    bool    _relayState                    = false;
+    volatile bool    _measureDone           = false;
+    volatile unsigned long _commandOnTime  = 0;
+    volatile unsigned long _resultTime     = 0;
 
   public:
-    Relay_control_and_measurement(uint8_t pin_coil, uint8_t pin_contact):
-                                  _pin_coil(pin_coil), _pin_contact(pin_contact)
+    RelayControlAndMeasurement(uint8_t pinCoil, uint8_t pinContact):
+                                  _pinCoil(pinCoil), _pinContact(pinContact)
                                   {}
 
 
   void init(void(*callback)()){
-    pinMode(_pin_coil, OUTPUT);
-    digitalWrite(_pin_coil, HIGH); // OFF Relay
-    pinMode(_pin_contact, INPUT_PULLDOWN);
-    attachInterrupt(_pin_contact, callback, RISING);
+    pinMode(_pinCoil, OUTPUT);
+    digitalWrite(_pinCoil, HIGH); // OFF Relay
+    pinMode(_pinContact, INPUT_PULLDOWN);
+    attachInterrupt(_pinContact, callback, RISING);
   }
 
   bool getRelayState(){
-    return _relay_state;
+    return _relayState;
   }
 
 
 
   void turnOn(){
-    _measure_done = false;
-    _result_time = 0;
-    _command_on_time = micros();
-    digitalWrite(_pin_coil, LOW); 
-    _relay_state = true;
+    _measureDone = false;
+    _resultTime= 0;
+    _commandOnTime = micros();
+    digitalWrite(_pinCoil, LOW); 
+    _relayState = true;
   }
 
   void turnOff(){
     
-    digitalWrite(_pin_coil, HIGH); 
-    _relay_state = false;
+    digitalWrite(_pinCoil, HIGH); 
+    _relayState = false;
   }
 
   void IRAM_ATTR measureWorkTime(){
-    if(!_measure_done && _relay_state){
-         _result_time = micros() - _command_on_time;
-         _measure_done = true;
+    if(!_measureDone && _relayState){
+         _resultTime= micros() - _commandOnTime;
+         _measureDone = true;
     }
  
 
   }
 
   unsigned long getResultTime(){
-    return _result_time;
+    return _resultTime;
   }
 
 
@@ -260,7 +260,7 @@ class Relay_control_and_measurement{
 
 Potentiometer duty_controler(POT_PIN);
 Soft_PWM_generator motor(MOTOR_PIN, FREQUENCY_PWM);
-Relay_control_and_measurement relay(RELAY_COIL_PIN, RELAY_CONTACT_PIN);
+RelayControlAndMeasurement relay(RELAY_COIL_PIN, RELAY_CONTACT_PIN);
 
 void IRAM_ATTR handleRelay(){
   relay.measureWorkTime();
@@ -279,19 +279,19 @@ void setup(){
 }
 
 void loop(){
-  static unsigned long last_adc_time = 0;
-  static unsigned long last_relay_time = 0;
+  static unsigned long lastAdcTime = 0;
+  static unsigned long lastRelayTime = 0;
   static uint8_t counterMeasure = 0;
   static uint32_t sumOfMeasure = 0;
   static bool endMeasure = false;
   motor.dutyControl();
-  if (millis() - last_adc_time > UPDATE_PWM_TIME) {
+  if (millis() - lastAdcTime > UPDATE_PWM_TIME) {
     motor.setPercentDuty(duty_controler.getPercent());
-    last_adc_time = millis();
+    lastAdcTime = millis();
   }
 
-  if (millis() - last_relay_time > RELAY_TOGGLE_TIME && !endMeasure) {
-    last_relay_time = millis();
+  if (millis() - lastRelayTime > RELAY_TOGGLE_TIME && !endMeasure) {
+    lastRelayTime = millis();
     if(relay.getRelayState()){
       relay.turnOff();
       sumOfMeasure += relay.getResultTime();
@@ -299,7 +299,7 @@ void loop(){
       /*
       Serial0.print("Relay trigger time (micros): ");
       Serial0.print(relay.getResultTime());
-      Serial0.println(" ms.");
+      Serial0.println(" mks.");
       */
     }
     else{
@@ -308,10 +308,10 @@ void loop(){
   }
 
   if (counterMeasure >= NUM_RELAY_TOGGLE){
-    uint32_t avarageMeasureTime = sumOfMeasure / NUM_RELAY_TOGGLE;
-    Serial0.print("Avarage work relay (micros): ");
-    Serial0.print(avarageMeasureTime);
-    Serial0.println(" ms.");
+    uint32_t averageMeasureTime = sumOfMeasure / NUM_RELAY_TOGGLE;
+    Serial0.print("average work relay (micros): ");
+    Serial0.print(averageMeasureTime);
+    Serial0.println(" mks.");
     counterMeasure = 0;
     sumOfMeasure = 0;
     endMeasure = true;
