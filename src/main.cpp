@@ -142,7 +142,7 @@ class Soft_PWM_generator{
     }
 
     void dutyControl(){
-      uint32_t  current_time =  micros(); 
+      uint32_t  currentTime =  micros(); 
 
       if(_percent == 100){
         if(!_pinState){
@@ -163,16 +163,16 @@ class Soft_PWM_generator{
 
 
       if(getPinState()){
-        if((current_time - _previousTime) >= _onTime){
+        if((currentTime - _previousTime) >= _onTime){
           digitalWrite(_pin, LOW);
            setPinState(false); 
-          _previousTime = current_time;
+          _previousTime = currentTime;
         }
       }
-      else if((current_time - _previousTime) >= _offTime){
+      else if((currentTime - _previousTime) >= _offTime){
           digitalWrite(_pin, HIGH);
           setPinState(true); 
-          _previousTime = current_time;
+          _previousTime = currentTime;
       }
     }
     
