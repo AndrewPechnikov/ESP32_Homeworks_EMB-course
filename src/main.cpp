@@ -97,7 +97,7 @@ void IRAM_ATTR onTimer()
 
 void PWMIteration(uint16_t currentCounter ,uint16_t dutyCycleLed ,uint8_t ledPin, bool blinkState){
 
-    if(!blinkState){
+    if(!blinkState || dutyCycleLed == 0){
         digitalWrite(ledPin, LOW);
         return;
     }
