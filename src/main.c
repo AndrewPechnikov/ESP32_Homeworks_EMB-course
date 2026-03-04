@@ -6,9 +6,9 @@
 #include "esp_log.h"
 
 #define POLLING_RATE_MS     10
-#define GPIO_YELLOW_MASTER  2
-#define GPIO_RED_MASTER     4  
-#define GPIO_GREEN_MASTER   5
+#define GPIO_YELLOW_MASTER  37
+#define GPIO_RED_MASTER     36 
+#define GPIO_GREEN_MASTER   40
 
 
 #define GPIO_YELLOW_SLAVE   18
@@ -16,7 +16,7 @@
 #define GPIO_GREEN_SLAVE    21
 
 
-#define GPIO_SWITCH         0
+#define GPIO_SWITCH         10
 
 
 #define TIME_RED_MASTER      5000
@@ -27,7 +27,7 @@
 
 #define TIME_RED_YELLOW      1000
 
-#define TIME_FLASING_GREEN   1000
+#define TIME_FLASING_GREEN   3000
 
 #define BLINK_TIME           500
 
@@ -86,6 +86,7 @@ void set_leds(traffic_light_t *tl, bool red, bool yellow, bool green);
 
 void app_main(void)
 {
+    ESP_LOGI(TAG, "Programm start");
     init();
     ESP_LOGI(TAG, "Init complete.");
 
@@ -95,12 +96,14 @@ void app_main(void)
             
         traffic_light_FSM(&master_light);
         traffic_light_FSM(&slave_light);
+
+
         
         if(!gpio_get_level(GPIO_SWITCH)){
             master_light.is_on = true;
             slave_light.is_on = true;
         }
-        else{
+        else if (gpio_get_level(GPIO_SWITCH)){
             master_light.is_on = false;
             slave_light.is_on = false;
         }
@@ -146,34 +149,36 @@ void init_traffic_light(traffic_light_t *tl, gpio_num_t gpio_red, gpio_num_t gpi
     tl->is_master = is_master;
     tl->is_on = false;
     tl->state = STATE_FLASHING_YELLOW;
-    tl->last_transition_time = xTaskGetTickCount() / portTICK_PERIOD_MS;
-    tl->last_blink_time = xTaskGetTickCount() / portTICK_PERIOD_MS;
+    tl->last_transition_time = xTaskGetTickCount() * portTICK_PERIOD_MS;
+    tl->last_blink_time = xTaskGetTickCount() * portTICK_PERIOD_MS;
 
 }
 
 
 
 void traffic_light_FSM(traffic_light_t *tl) {
-
-    uint32_t current_time = xTaskGetTickCount() / portTICK_PERIOD_MS;
+    //ESP_LOGI(TAG, "Current state: %d", (int)tl->state);
+    
+    uint32_t current_time = xTaskGetTickCount() * portTICK_PERIOD_MS;
 
     switch (tl->state) {
         case STATE_FLASHING_YELLOW:
-
+            
+            
             
 
             if(current_time - tl->last_blink_time > BLINK_TIME){
                 gpio_set_level(tl->gpio_yellow, !gpio_get_level(tl->gpio_yellow));
-                tl->last_blink_time = xTaskGetTickCount() / portTICK_PERIOD_MS;
+                tl->last_blink_time = xTaskGetTickCount() * portTICK_PERIOD_MS;
             }
 
             if(tl->is_on && tl->is_master){
                     tl->state = STATE_GREEN;
-                    tl->last_transition_time = xTaskGetTickCount() / portTICK_PERIOD_MS;
+                    tl->last_transition_time = xTaskGetTickCount() * portTICK_PERIOD_MS;
             }
             else if(tl->is_on  && !tl->is_master){
                     tl->state = STATE_RED;
-                    tl->last_transition_time = xTaskGetTickCount() / portTICK_PERIOD_MS;
+                    tl->last_transition_time = xTaskGetTickCount() * portTICK_PERIOD_MS;
             }
             
             break;
@@ -186,12 +191,12 @@ void traffic_light_FSM(traffic_light_t *tl) {
 
             if((current_time - tl->last_transition_time > (TIME_RED_MASTER-TIME_RED_YELLOW)) && tl->is_master){
                     tl->state = STATE_RED_YELLOW;
-                    tl->last_transition_time = xTaskGetTickCount() / portTICK_PERIOD_MS;
+                    tl->last_transition_time = xTaskGetTickCount() * portTICK_PERIOD_MS;
                     
             }
             else if((current_time - tl->last_transition_time  > (TIME_RED_SLAVE - TIME_RED_YELLOW)) && !(tl->is_master)){
                     tl->state = STATE_RED_YELLOW;
-                    tl->last_transition_time = xTaskGetTickCount() / portTICK_PERIOD_MS;
+                    tl->last_transition_time = xTaskGetTickCount() * portTICK_PERIOD_MS;
             }
 
             break;
@@ -202,7 +207,7 @@ void traffic_light_FSM(traffic_light_t *tl) {
 
             if(current_time - tl->last_transition_time > TIME_RED_YELLOW){
                 tl->state = STATE_GREEN;
-                tl->last_transition_time = xTaskGetTickCount() / portTICK_PERIOD_MS; 
+                tl->last_transition_time = xTaskGetTickCount() * portTICK_PERIOD_MS; 
             }
                      
             break;
@@ -212,11 +217,11 @@ void traffic_light_FSM(traffic_light_t *tl) {
         
             if(current_time - tl->last_transition_time > TIME_GREEN_MASTER && tl->is_master){
                 tl->state = STATE_FLASHING_GREEN;
-                tl->last_transition_time = xTaskGetTickCount() / portTICK_PERIOD_MS;
+                tl->last_transition_time = xTaskGetTickCount() * portTICK_PERIOD_MS;
             }
             else if(current_time - tl->last_transition_time> TIME_GREEN_SLAVE-TIME_FLASING_GREEN && !(tl->is_master)){
                 tl->state = STATE_FLASHING_GREEN;;
-                tl->last_transition_time = xTaskGetTickCount() / portTICK_PERIOD_MS;
+                tl->last_transition_time = xTaskGetTickCount() * portTICK_PERIOD_MS;
             }
             break;
 
@@ -225,11 +230,11 @@ void traffic_light_FSM(traffic_light_t *tl) {
             
             if(current_time - tl->last_transition_time > TIME_FLASING_GREEN){
                 tl->state = STATE_YELLOW;
-                tl->last_transition_time = xTaskGetTickCount() / portTICK_PERIOD_MS;
+                tl->last_transition_time = xTaskGetTickCount() * portTICK_PERIOD_MS;
             }
             if(current_time - tl->last_blink_time > BLINK_TIME){
                 gpio_set_level(tl->gpio_green, !gpio_get_level(tl->gpio_green));
-                tl->last_blink_time = xTaskGetTickCount() / portTICK_PERIOD_MS;
+                tl->last_blink_time = xTaskGetTickCount() * portTICK_PERIOD_MS;
             }
 
 
@@ -241,7 +246,11 @@ void traffic_light_FSM(traffic_light_t *tl) {
             
             if(current_time - tl->last_transition_time > TIME_YELLOW){
                 tl->state = STATE_RED;
-                tl->last_transition_time = xTaskGetTickCount() / portTICK_PERIOD_MS;
+                tl->last_transition_time = xTaskGetTickCount() * portTICK_PERIOD_MS;
+            }
+            else if(!tl->is_on){
+                tl->state = STATE_FLASHING_YELLOW;
+                tl->last_transition_time = xTaskGetTickCount() * portTICK_PERIOD_MS;
             }
             break;
 
