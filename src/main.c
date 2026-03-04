@@ -5,66 +5,105 @@
 #include "esp_timer.h"
 #include "esp_log.h"
 
-#define LED_PIN GPIO_NUM_36
-#define BUTTON_PIN GPIO_NUM_1
-#define DEBOUNCE_DELAY_MS 50
-#define POLLING_RATE_MS 10  
+#define POLLING_RATE_MS     10
+#define GPIO_YELLOW_MASTER  2
+#define GPIO_RED_MASTER     4  
+#define GPIO_GREEN_MASTER   5
+
+
+#define GPIO_YELLOW_SLAVE   18
+#define GPIO_RED_SLAVE      19
+#define GPIO_GREEN_SLAVE    21
+
+
+#define GPIO_SWITCH         0
+
+
+#define TIME_RED_MASTER      5000
+#define TIME_GREEN_MASTER    4000
+
+#define TIME_RED_SLAVE       TIME_GREEN_MASTER
+#define TIME_GREEN_SLAVE     TIME_RED_MASTER
+
+#define TIME_RED_YELLOW      1000
+
+#define TIME_FLASING_GREEN   1000
+
+#define BLINK_TIME           500
+
+#define TIME_YELLOW          1000
+
+
+
+
+
+
+
+
+
 
 static const char *TAG = "MY_APP";
 
 typedef enum {
-    STATE_IDLE,
-    STATE_DEBOUNCE_PRESS,
-    STATE_PRESSED,
-    STATE_DEBOUNCE_RELEASE
-} button_state_t;
+    STATE_FLASHING_YELLOW,
+    STATE_RED,
+    STATE_GREEN,
+    STATE_YELLOW,
+    STATE_FLASHING_GREEN,
+    STATE_RED_YELLOW
 
-void timer_callback(void* arg);
+}traffic_light_state_t;
 
-const esp_timer_create_args_t timer_args = {
-    .callback   = &timer_callback,
-    .name       = "my_high_res_timer"
-};
+typedef struct {
+    gpio_num_t gpio_red;
+    gpio_num_t gpio_yellow;
+    gpio_num_t gpio_green;
+    bool is_master;
+    bool is_on;
 
-volatile bool button_pressed = false;
-bool debounce_flag = true;
-volatile int counter = 0;
-static volatile bool led_state = false;
+    traffic_light_state_t state;
+
+    uint32_t last_transition_time;
+    uint32_t last_blink_time;
+} traffic_light_t;
+
+traffic_light_t master_light;
+traffic_light_t slave_light;
 
 
-button_state_t btn_state = STATE_IDLE;
-uint32_t state_timer = 0; 
-
-esp_timer_handle_t my_timer;
 
 
 void init(void);
-void without_debounce(void);
-void soft_debounce(void);
-void soft_state_debounce(void);
-void button_FSM(void);
+void traffic_light_FSM(traffic_light_t *tl);
+void init_traffic_light(traffic_light_t *light, gpio_num_t gpio_red, gpio_num_t gpio_yellow, gpio_num_t gpio_green, bool is_master);
+void set_leds(traffic_light_t *tl, bool red, bool yellow, bool green);
 
 
-void IRAM_ATTR gpio_isr_handler(void *arg){
-    button_pressed = true; 
-    counter++;
-}
+
+
+
 
 
 void app_main(void)
 {
     init();
-    ESP_LOGI(TAG, "Init complete. Starting Polling FSM (Task 4)...");
+    ESP_LOGI(TAG, "Init complete.");
 
     while (1) {
         
 
-        //without_debounce(); // task 1
-        //soft_debounce();   // task 2    
-        //soft_state_debounce(); // task 3
+            
+        traffic_light_FSM(&master_light);
+        traffic_light_FSM(&slave_light);
         
-        button_FSM(); // task 4
-        
+        if(!gpio_get_level(GPIO_SWITCH)){
+            master_light.is_on = true;
+            slave_light.is_on = true;
+        }
+        else{
+            master_light.is_on = false;
+            slave_light.is_on = false;
+        }
         
         
         vTaskDelay(POLLING_RATE_MS / portTICK_PERIOD_MS);
@@ -73,105 +112,152 @@ void app_main(void)
 
 void init() {
 
+    gpio_reset_pin(GPIO_YELLOW_MASTER);
+    gpio_set_direction(GPIO_YELLOW_MASTER, GPIO_MODE_INPUT_OUTPUT);
+    gpio_reset_pin(GPIO_RED_MASTER);
+    gpio_set_direction(GPIO_RED_MASTER, GPIO_MODE_INPUT_OUTPUT);
+    gpio_reset_pin(GPIO_GREEN_MASTER);
+    gpio_set_direction(GPIO_GREEN_MASTER, GPIO_MODE_INPUT_OUTPUT);
 
-    esp_timer_create(&timer_args, &my_timer);
+    gpio_reset_pin(GPIO_YELLOW_SLAVE);
+    gpio_set_direction(GPIO_YELLOW_SLAVE, GPIO_MODE_INPUT_OUTPUT);
+    gpio_reset_pin(GPIO_RED_SLAVE);
+    gpio_set_direction(GPIO_RED_SLAVE, GPIO_MODE_INPUT_OUTPUT);
+    gpio_reset_pin(GPIO_GREEN_SLAVE);
+    gpio_set_direction(GPIO_GREEN_SLAVE, GPIO_MODE_INPUT_OUTPUT);
+
+
+    set_leds(&master_light, 0, 0, 0);
+    set_leds(&slave_light, 0, 0, 0);
    
-    gpio_reset_pin(LED_PIN);
-    gpio_set_direction(LED_PIN, GPIO_MODE_OUTPUT);
+
+    init_traffic_light(&master_light, GPIO_RED_MASTER, GPIO_YELLOW_MASTER, GPIO_GREEN_MASTER, true);
+    init_traffic_light(&slave_light, GPIO_RED_SLAVE, GPIO_YELLOW_SLAVE, GPIO_GREEN_SLAVE, false);
 
 
-    gpio_reset_pin(BUTTON_PIN);
-    gpio_set_direction(BUTTON_PIN, GPIO_MODE_INPUT);
-    gpio_set_pull_mode(BUTTON_PIN, GPIO_PULLUP_ONLY);
-
-      
-    
-    gpio_set_intr_type(BUTTON_PIN, GPIO_INTR_NEGEDGE);
-    gpio_install_isr_service(0);
-    gpio_isr_handler_add(BUTTON_PIN, gpio_isr_handler, (void*) BUTTON_PIN);
+   
     
 }
 
-void button_FSM() {
-    bool is_pin_low = (gpio_get_level(BUTTON_PIN) == 0);
+void init_traffic_light(traffic_light_t *tl, gpio_num_t gpio_red, gpio_num_t gpio_yellow, gpio_num_t gpio_green, bool is_master){
+    tl->gpio_red = gpio_red;
+    tl->gpio_yellow = gpio_yellow;
+    tl->gpio_green = gpio_green;
+    tl->is_master = is_master;
+    tl->is_on = false;
+    tl->state = STATE_FLASHING_YELLOW;
+    tl->last_transition_time = xTaskGetTickCount() / portTICK_PERIOD_MS;
+    tl->last_blink_time = xTaskGetTickCount() / portTICK_PERIOD_MS;
 
-    switch (btn_state) {
-        case STATE_IDLE:
-            if (is_pin_low) {
-                btn_state = STATE_DEBOUNCE_PRESS;
-                state_timer = 0; 
+}
+
+
+
+void traffic_light_FSM(traffic_light_t *tl) {
+
+    uint32_t current_time = xTaskGetTickCount() / portTICK_PERIOD_MS;
+
+    switch (tl->state) {
+        case STATE_FLASHING_YELLOW:
+
+            
+
+            if(current_time - tl->last_blink_time > BLINK_TIME){
+                gpio_set_level(tl->gpio_yellow, !gpio_get_level(tl->gpio_yellow));
+                tl->last_blink_time = xTaskGetTickCount() / portTICK_PERIOD_MS;
+            }
+
+            if(tl->is_on && tl->is_master){
+                    tl->state = STATE_GREEN;
+                    tl->last_transition_time = xTaskGetTickCount() / portTICK_PERIOD_MS;
+            }
+            else if(tl->is_on  && !tl->is_master){
+                    tl->state = STATE_RED;
+                    tl->last_transition_time = xTaskGetTickCount() / portTICK_PERIOD_MS;
+            }
+            
+            break;
+
+
+            case STATE_RED:
+            set_leds(tl, true, false, false);
+
+            
+
+            if((current_time - tl->last_transition_time > (TIME_RED_MASTER-TIME_RED_YELLOW)) && tl->is_master){
+                    tl->state = STATE_RED_YELLOW;
+                    tl->last_transition_time = xTaskGetTickCount() / portTICK_PERIOD_MS;
+                    
+            }
+            else if((current_time - tl->last_transition_time  > (TIME_RED_SLAVE - TIME_RED_YELLOW)) && !(tl->is_master)){
+                    tl->state = STATE_RED_YELLOW;
+                    tl->last_transition_time = xTaskGetTickCount() / portTICK_PERIOD_MS;
+            }
+
+            break;
+
+            case STATE_RED_YELLOW:
+            set_leds(tl, 1, 1, 0);
+            
+
+            if(current_time - tl->last_transition_time > TIME_RED_YELLOW){
+                tl->state = STATE_GREEN;
+                tl->last_transition_time = xTaskGetTickCount() / portTICK_PERIOD_MS; 
+            }
+                     
+            break;
+
+            case STATE_GREEN:
+            set_leds(tl, 0, 0, 1);
+        
+            if(current_time - tl->last_transition_time > TIME_GREEN_MASTER && tl->is_master){
+                tl->state = STATE_FLASHING_GREEN;
+                tl->last_transition_time = xTaskGetTickCount() / portTICK_PERIOD_MS;
+            }
+            else if(current_time - tl->last_transition_time> TIME_GREEN_SLAVE-TIME_FLASING_GREEN && !(tl->is_master)){
+                tl->state = STATE_FLASHING_GREEN;;
+                tl->last_transition_time = xTaskGetTickCount() / portTICK_PERIOD_MS;
             }
             break;
 
-        case STATE_DEBOUNCE_PRESS:
-            state_timer++;
-            if (state_timer >= (DEBOUNCE_DELAY_MS / POLLING_RATE_MS)) { 
-                if (is_pin_low) {
-                    btn_state = STATE_PRESSED;
-                    led_state = !led_state; 
-                    gpio_set_level(LED_PIN, led_state);
-                    counter++;
-                    ESP_LOGI(TAG, "Button pressed via FSM! LED: %d, Count: %d", led_state, counter);
-                } else {
-                    btn_state = STATE_IDLE; 
-                }
+            case STATE_FLASHING_GREEN:
+           
+            
+            if(current_time - tl->last_transition_time > TIME_FLASING_GREEN){
+                tl->state = STATE_YELLOW;
+                tl->last_transition_time = xTaskGetTickCount() / portTICK_PERIOD_MS;
+            }
+            if(current_time - tl->last_blink_time > BLINK_TIME){
+                gpio_set_level(tl->gpio_green, !gpio_get_level(tl->gpio_green));
+                tl->last_blink_time = xTaskGetTickCount() / portTICK_PERIOD_MS;
+            }
+
+
+            
+            break;
+
+            case STATE_YELLOW:
+            set_leds(tl, 0, 1, 0);
+            
+            if(current_time - tl->last_transition_time > TIME_YELLOW){
+                tl->state = STATE_RED;
+                tl->last_transition_time = xTaskGetTickCount() / portTICK_PERIOD_MS;
             }
             break;
 
-        case STATE_PRESSED:
-            if (!is_pin_low) {
-                btn_state = STATE_DEBOUNCE_RELEASE;
-                state_timer = 0;
-            }
+            default:
+            set_leds(tl, 1, 1, 1);
             break;
-
-        case STATE_DEBOUNCE_RELEASE:
-            state_timer++;
-            if (state_timer >= (DEBOUNCE_DELAY_MS / POLLING_RATE_MS)) {
-                if (!is_pin_low) {
-                    btn_state = STATE_IDLE; 
-                } else {
-                    btn_state = STATE_PRESSED; 
-                }
-            }
-            break;
+    
     }
-}
-
-
-void without_debounce() {
-    if (button_pressed) {
-        button_pressed = false;
-        led_state = !led_state; 
-        gpio_set_level(LED_PIN, led_state);
-        ESP_LOGI(TAG, "Button pressed! Toggling LED... Count: %d", counter);
-    }
-}
-
-void soft_debounce() {
-    if (button_pressed && debounce_flag) {
-        button_pressed = false;
-        debounce_flag = false;
-        led_state = !led_state; 
-        gpio_set_level(LED_PIN, led_state);
-        esp_timer_start_once(my_timer, 50000); 
-        ESP_LOGI(TAG, "Button pressed! Toggling LED... Count: %d", counter);
-    }
-}
-
-void soft_state_debounce() {
-    if (button_pressed && !gpio_get_level(BUTTON_PIN)) {
-        button_pressed = false;
-        led_state = !led_state; 
-        gpio_set_level(LED_PIN, led_state);
-        ESP_LOGI(TAG, "Button pressed! Toggling LED... Count: %d", counter);
-    }
-}
-
-void timer_callback(void* arg){
-
-    button_pressed = false;
-
-    debounce_flag = true;
 
 }
+
+
+void set_leds(traffic_light_t *tl, bool red, bool yellow, bool green){
+    gpio_set_level(tl->gpio_red, red);
+    gpio_set_level(tl->gpio_yellow, yellow);
+    gpio_set_level(tl->gpio_green, green);
+}
+
+    
