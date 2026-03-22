@@ -6,7 +6,7 @@
 #include "driver/gpio.h"
 
 
-#define ADC_PIN         ADC_CHANNEL_7
+#define ADC_PIN         ADC_CHANNEL_7   //gpio8
 #define ADC_unit        ADC_UNIT_1
 #define ADC_BITWIDTH    ADC_BITWIDTH_12
 #define ADC_ATTEN       ADC_ATTEN_DB_12
@@ -21,7 +21,7 @@
 
 
 typedef struct {
-    int     values[WINDOW_SIZE];  //Масив для зберігання останніх значень
+    int     values[WINDOW_SIZE];  
     int     index;
     long    sum;
     bool    full;
