@@ -7,7 +7,7 @@
 #include "driver/ledc.h"
 #include "esp_timer.h"
 
-// Конфігурація пінів
+
 #define ADC_PIN          ADC_CHANNEL_7
 #define ADC_UNIT         ADC_UNIT_1
 #define GPIO_LED1        GPIO_NUM_45
@@ -16,7 +16,7 @@
 
 #define DEBOUNCE_TIME_MS 100
 
-// PWM конфігурація
+
 #define LEDC_MODE        LEDC_LOW_SPEED_MODE
 #define LEDC_TIMER       LEDC_TIMER_0
 #define LEDC_DUTY_RES    LEDC_TIMER_12_BIT
