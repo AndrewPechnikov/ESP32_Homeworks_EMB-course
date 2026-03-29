@@ -1,94 +1,96 @@
 #include <stdio.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "esp_adc/adc_oneshot.h"
-#include "esp_log.h"
+#include "freertos/queue.h"
 #include "driver/gpio.h"
-#include "driver/ledc.h"
-#include "esp_timer.h"
+#include "esp_log.h"
+#include "esp_timer.h" 
 
-#define ADC_PIN             ADC_CHANNEL_7
-#define ADC_UNIT            ADC_UNIT_1
-#define ADC_V_MIN           500    
-#define ADC_V_MAX           3300   
-#define ADC_RESOLUTION      4095   
+#define ENCODER_CLK_GPIO 5
+#define ENCODER_DT_GPIO  4
+#define ENCODER_SW_GPIO  1
 
-#define GPIO_LED1           GPIO_NUM_37
-#define LEDC_MODE           LEDC_LOW_SPEED_MODE
-#define LEDC_TIMER          LEDC_TIMER_0
-#define LEDC_DUTY_RES       LEDC_TIMER_12_BIT
-#define LEDC_FREQUENCY      50     
+static const char *TAG = "ENCODER";
+static int64_t encoder_counter = 0;
+static QueueHandle_t gpio_evt_queue = NULL;
 
-#define SERVO_MIN_DUTY      102   
-#define SERVO_MAX_DUTY      491   
-#define SERVO_MAX_ANGLE     280   
+// Обробник переривання (ISR) - виконується максимально швидко
+static void IRAM_ATTR gpio_isr_handler(void* arg) {
+    uint32_t gpio_num = (uint32_t) arg;
+    
+    static uint64_t last_clk_time = 0;
+    static uint64_t last_sw_time = 0;
+    
+    uint64_t current_time = esp_timer_get_time();
 
-#define LOG_INTERVAL_MS     500   
-#define MAIN_LOOP_DELAY_MS  10     
-
-adc_oneshot_unit_handle_t adc_handle;
-
-void init_pwm() {
-    ledc_timer_config_t ledc_timer = {
-        .speed_mode = LEDC_MODE,
-        .duty_resolution = LEDC_DUTY_RES,
-        .timer_num = LEDC_TIMER,
-        .freq_hz = LEDC_FREQUENCY,
-        .clk_cfg = LEDC_AUTO_CLK
-    };
-    ledc_timer_config(&ledc_timer);
-
-    ledc_channel_config_t chan0 = {
-        .speed_mode = LEDC_MODE,
-        .channel = LEDC_CHANNEL_0,
-        .timer_sel = LEDC_TIMER,
-        .intr_type = LEDC_INTR_DISABLE,
-        .gpio_num = GPIO_LED1,
-        .duty = 0,
-        .hpoint = 0
-    };
-    ledc_channel_config(&chan0);
+    if (gpio_num == ENCODER_CLK_GPIO) {
+        if ((current_time - last_clk_time) > 2000) {
+            xQueueSendFromISR(gpio_evt_queue, &gpio_num, NULL);
+            last_clk_time = current_time;
+        }
+    } 
+    else if (gpio_num == ENCODER_SW_GPIO) {
+        if ((current_time - last_sw_time) > 50000) {
+            xQueueSendFromISR(gpio_evt_queue, &gpio_num, NULL);
+            last_sw_time = current_time;
+        }
+    }
 }
 
-
-long map(long x, long in_min, long in_max, long out_min, long out_max) {
-    if (x < in_min) return out_min;
-    if (x > in_max) return out_max;
-    return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
-}
-
-void app_main() {
-    init_pwm();
-
-    adc_oneshot_unit_init_cfg_t init_config = {
-        .unit_id = ADC_UNIT,
-    };
-    adc_oneshot_new_unit(&init_config, &adc_handle);
-
-    adc_oneshot_chan_cfg_t config = {
-        .bitwidth = ADC_BITWIDTH_12,
-        .atten = ADC_ATTEN_DB_12,
-    };
-    adc_oneshot_config_channel(adc_handle, ADC_PIN, &config);
-
-    int adc_raw;
-    uint32_t last_log_time = (uint32_t)(esp_timer_get_time() / 1000);
+void encoder_task(void* arg) {
+    uint32_t io_num;
+    int last_clk_level = gpio_get_level(ENCODER_CLK_GPIO);
     
     while (1) {
-        ESP_ERROR_CHECK(adc_oneshot_read(adc_handle, ADC_PIN, &adc_raw));
-
-        int duty = map(adc_raw, ADC_V_MIN, ADC_V_MAX, SERVO_MIN_DUTY, SERVO_MAX_DUTY);
-        int angle = map(adc_raw, 0, ADC_RESOLUTION, 0, SERVO_MAX_ANGLE);
-
-        ledc_set_duty(LEDC_MODE, LEDC_CHANNEL_0, duty);
-        ledc_update_duty(LEDC_MODE, LEDC_CHANNEL_0);
-
-        uint32_t current_time_ms = (uint32_t)(esp_timer_get_time() / 1000);
-        if (current_time_ms - last_log_time >= LOG_INTERVAL_MS) {
-            ESP_LOGI("PWM", "ADC: %d | Angle: %d | Duty: %d", adc_raw, angle, duty);
-            last_log_time = current_time_ms;
+        if (xQueueReceive(gpio_evt_queue, &io_num, portMAX_DELAY)) {
+            if (io_num == ENCODER_CLK_GPIO) {
+                int clk_level = gpio_get_level(ENCODER_CLK_GPIO);
+                if (clk_level != last_clk_level) { // Перевірка на зміну стану (Edge)
+                    int dt_level = gpio_get_level(ENCODER_DT_GPIO);
+                    
+                    if (clk_level != dt_level) {
+                        encoder_counter++;
+                    } else {
+                        encoder_counter--;
+                    }
+                    last_clk_level = clk_level;
+                    ESP_LOGI(TAG, "Count: %lld", encoder_counter);
+                }
+            } else if (io_num == ENCODER_SW_GPIO) {
+                if (gpio_get_level(ENCODER_SW_GPIO) == 0) {
+                    ESP_LOGW(TAG, "Button Pressed!");
+                }
+            }
         }
-
-        vTaskDelay(pdMS_TO_TICKS(MAIN_LOOP_DELAY_MS));
     }
+}
+
+void app_main(void) {
+  
+    gpio_config_t io_conf = {
+        .intr_type = GPIO_INTR_ANYEDGE,
+        .pin_bit_mask = (1ULL << ENCODER_CLK_GPIO),
+        .mode = GPIO_MODE_INPUT,
+        .pull_up_en = GPIO_PULLUP_ENABLE
+    };
+    gpio_config(&io_conf);
+
+    // DT пін просто як вхід
+    io_conf.intr_type = GPIO_INTR_DISABLE;
+    io_conf.pin_bit_mask = (1ULL << ENCODER_DT_GPIO);
+    gpio_config(&io_conf);
+
+    // Кнопка SW
+    io_conf.intr_type = GPIO_INTR_NEGEDGE; 
+    io_conf.pin_bit_mask = (1ULL << ENCODER_SW_GPIO);
+    gpio_config(&io_conf);
+
+    // 2. Створення черги для обробки подій поза ISR
+    gpio_evt_queue = xQueueCreate(10, sizeof(uint32_t));
+    xTaskCreate(encoder_task, "encoder_task", 2048, NULL, 10, NULL);
+
+    // 3. Встановлення сервісу переривань
+    gpio_install_isr_service(0);
+    gpio_isr_handler_add(ENCODER_CLK_GPIO, gpio_isr_handler, (void*) ENCODER_CLK_GPIO);
+    gpio_isr_handler_add(ENCODER_SW_GPIO, gpio_isr_handler, (void*) ENCODER_SW_GPIO);
 }
