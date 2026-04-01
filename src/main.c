@@ -1,96 +1,68 @@
 #include <stdio.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "freertos/queue.h"
+#include "driver/pulse_cnt.h"
 #include "driver/gpio.h"
 #include "esp_log.h"
-#include "esp_timer.h" 
-
-#define ENCODER_CLK_GPIO 5
-#define ENCODER_DT_GPIO  4
-#define ENCODER_SW_GPIO  1
 
 static const char *TAG = "ENCODER";
-static int64_t encoder_counter = 0;
-static QueueHandle_t gpio_evt_queue = NULL;
 
-// Обробник переривання (ISR) - виконується максимально швидко
-static void IRAM_ATTR gpio_isr_handler(void* arg) {
-    uint32_t gpio_num = (uint32_t) arg;
-    
-    static uint64_t last_clk_time = 0;
-    static uint64_t last_sw_time = 0;
-    
-    uint64_t current_time = esp_timer_get_time();
+#define ENCODER_PIN_CLK  14
+#define ENCODER_PIN_DT   13
+#define MAX_GLITCH_NS    1000
 
-    if (gpio_num == ENCODER_CLK_GPIO) {
-        if ((current_time - last_clk_time) > 2000) {
-            xQueueSendFromISR(gpio_evt_queue, &gpio_num, NULL);
-            last_clk_time = current_time;
-        }
-    } 
-    else if (gpio_num == ENCODER_SW_GPIO) {
-        if ((current_time - last_sw_time) > 50000) {
-            xQueueSendFromISR(gpio_evt_queue, &gpio_num, NULL);
-            last_sw_time = current_time;
-        }
-    }
-}
+#define PCNT_HIGH_LIMIT 30000
+#define PCNT_LOW_LIMIT  -30000
 
-void encoder_task(void* arg) {
-    uint32_t io_num;
-    int last_clk_level = gpio_get_level(ENCODER_CLK_GPIO);
-    
-    while (1) {
-        if (xQueueReceive(gpio_evt_queue, &io_num, portMAX_DELAY)) {
-            if (io_num == ENCODER_CLK_GPIO) {
-                int clk_level = gpio_get_level(ENCODER_CLK_GPIO);
-                if (clk_level != last_clk_level) { // Перевірка на зміну стану (Edge)
-                    int dt_level = gpio_get_level(ENCODER_DT_GPIO);
-                    
-                    if (clk_level != dt_level) {
-                        encoder_counter++;
-                    } else {
-                        encoder_counter--;
-                    }
-                    last_clk_level = clk_level;
-                    ESP_LOGI(TAG, "Count: %lld", encoder_counter);
-                }
-            } else if (io_num == ENCODER_SW_GPIO) {
-                if (gpio_get_level(ENCODER_SW_GPIO) == 0) {
-                    ESP_LOGW(TAG, "Button Pressed!");
-                }
-            }
-        }
-    }
-}
+void app_main(void){
+    ESP_LOGI(TAG, "Initializing pulse counter...");
 
-void app_main(void) {
-  
-    gpio_config_t io_conf = {
-        .intr_type = GPIO_INTR_ANYEDGE,
-        .pin_bit_mask = (1ULL << ENCODER_CLK_GPIO),
-        .mode = GPIO_MODE_INPUT,
-        .pull_up_en = GPIO_PULLUP_ENABLE
+
+    pcnt_unit_config_t unit_config = {
+        .high_limit = PCNT_HIGH_LIMIT,
+        .low_limit = PCNT_LOW_LIMIT,
     };
-    gpio_config(&io_conf);
+    pcnt_unit_handle_t pcnt_unit = NULL;
+    ESP_ERROR_CHECK(pcnt_new_unit(&unit_config, &pcnt_unit));
 
-    // DT пін просто як вхід
-    io_conf.intr_type = GPIO_INTR_DISABLE;
-    io_conf.pin_bit_mask = (1ULL << ENCODER_DT_GPIO);
-    gpio_config(&io_conf);
+    pcnt_glitch_filter_config_t filter_config = {
+        .max_glitch_ns = MAX_GLITCH_NS,
+    };
+    ESP_ERROR_CHECK(pcnt_unit_set_glitch_filter(pcnt_unit, &filter_config));
 
-    // Кнопка SW
-    io_conf.intr_type = GPIO_INTR_NEGEDGE; 
-    io_conf.pin_bit_mask = (1ULL << ENCODER_SW_GPIO);
-    gpio_config(&io_conf);
+    pcnt_chan_config_t chan_clk_config = {
+        .edge_gpio_num = ENCODER_PIN_CLK,
+        .level_gpio_num = ENCODER_PIN_DT,
+    };
+    pcnt_channel_handle_t pcnt_chan_clk = NULL;
+    ESP_ERROR_CHECK(pcnt_new_channel(pcnt_unit, &chan_clk_config, &pcnt_chan_clk));
 
-    // 2. Створення черги для обробки подій поза ISR
-    gpio_evt_queue = xQueueCreate(10, sizeof(uint32_t));
-    xTaskCreate(encoder_task, "encoder_task", 2048, NULL, 10, NULL);
+    pcnt_chan_config_t chan_dt_config = {
+        .edge_gpio_num = ENCODER_PIN_DT,
+        .level_gpio_num = ENCODER_PIN_CLK,
+    };
 
-    // 3. Встановлення сервісу переривань
-    gpio_install_isr_service(0);
-    gpio_isr_handler_add(ENCODER_CLK_GPIO, gpio_isr_handler, (void*) ENCODER_CLK_GPIO);
-    gpio_isr_handler_add(ENCODER_SW_GPIO, gpio_isr_handler, (void*) ENCODER_SW_GPIO);
-}
+    pcnt_channel_handle_t pcnt_chan_dt = NULL;
+    ESP_ERROR_CHECK(pcnt_new_channel(pcnt_unit, &chan_dt_config, &pcnt_chan_dt));
+
+    ESP_ERROR_CHECK(pcnt_channel_set_edge_action(pcnt_chan_clk, PCNT_CHANNEL_EDGE_ACTION_DECREASE, PCNT_CHANNEL_EDGE_ACTION_INCREASE));
+    ESP_ERROR_CHECK(pcnt_channel_set_level_action(pcnt_chan_clk, PCNT_CHANNEL_LEVEL_ACTION_KEEP, PCNT_CHANNEL_LEVEL_ACTION_INVERSE));
+
+    ESP_ERROR_CHECK(pcnt_channel_set_edge_action(pcnt_chan_dt, PCNT_CHANNEL_EDGE_ACTION_INCREASE, PCNT_CHANNEL_EDGE_ACTION_DECREASE));
+    ESP_ERROR_CHECK(pcnt_channel_set_level_action(pcnt_chan_dt, PCNT_CHANNEL_LEVEL_ACTION_KEEP, PCNT_CHANNEL_LEVEL_ACTION_INVERSE));
+
+    ESP_ERROR_CHECK(pcnt_unit_enable(pcnt_unit));
+    ESP_ERROR_CHECK(pcnt_unit_clear_count(pcnt_unit));
+    ESP_ERROR_CHECK(pcnt_unit_start(pcnt_unit));
+
+    ESP_LOGI(TAG, "Pulse counter initialized. Starting to count...");
+
+
+    int pulse_count = 0;
+    while (1) {
+        ESP_ERROR_CHECK(pcnt_unit_get_count(pcnt_unit, &pulse_count));
+        ESP_LOGI(TAG, "Raw count: %d | Position: %d", pulse_count, pulse_count / 4);
+        vTaskDelay(pdMS_TO_TICKS(500));
+    }
+    
+}    
